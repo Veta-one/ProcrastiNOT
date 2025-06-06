@@ -26,9 +26,10 @@ def resource_path(relative_path):
         base_path = os.path.abspath(".")
     return os.path.join(base_path, relative_path)
 
-DEFAULT_ICON_PATH = resource_path('assets/icon.png')
+APP_ICON_PNG = resource_path('assets/app_icon.png')
+DEFAULT_ICON_PATH = APP_ICON_PNG
+NOTIFICATION_APP_ICON_PATH = APP_ICON_PNG
 DEFAULT_SOUND_PATH = resource_path('assets/notification.wav')
-NOTIFICATION_APP_ICON_PATH = resource_path('assets/icon.png')
 CONFIG_FILE = 'settings.ini'
 
 APP_FONT_FAMILY = "Montserrat"
@@ -79,12 +80,21 @@ class ConfigManager:
 
     def create_default_config(self):
         self.config['Timers'] = {
-            'work_minutes': '75', 'rest_minutes': '33', 'postpone_minutes': '5',
-            'sound_enabled': 'True', 'sound_file': DEFAULT_SOUND_PATH, 'icon_update_rate_seconds': '1',
+            'work_minutes': '75',
+            'rest_minutes': '33',
+            'postpone_minutes': '5',
+            'sound_enabled': 'True',
+            'sound_file': DEFAULT_SOUND_PATH,
+            'icon_update_rate_seconds': '1',
             'notif_timeout': '5'
         }
-        self.config['Schedule'] = {'active_start_hour': '9', 'active_end_hour': '18'}
-        self.save_config()
+        self.config['Schedule'] = {
+            'active_start_hour': '9',
+            'active_end_hour': '18'
+        }
+        # Записываем созданный конфиг напрямую в файл
+        with open(self.filename, 'w') as cf:
+            self.config.write(cf)
 
     def save_config(self):
         self.config['Timers'] = {
