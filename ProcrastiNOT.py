@@ -41,6 +41,7 @@ STYLE_CONFIGS = {
     "rest": {"timer_fg": "#f33100"},
     "postponed": {"timer_fg": "#ffffff"},
     "rest_prompt": {"timer_fg": "#ffffff"},
+    "work_prompt": {"timer_fg": "#ffffff"},
 }
 
 TRAY_ICON_WORK_BG = "#1e1e1e"
@@ -53,6 +54,8 @@ TRAY_ICON_POSTPONED_BG = "#f3a500"
 TRAY_ICON_POSTPONED_FG = "#ffffff"
 TRAY_ICON_IDLE_BG = "#1c1c1c"
 TRAY_ICON_IDLE_FG = "#777777"
+TRAY_ICON_WORK_PROMPT_BG = "#64a4d9"
+TRAY_ICON_WORK_PROMPT_FG = "#000000"
 
 
 # Класс ConfigManager остается практически без изменений
@@ -234,6 +237,7 @@ class CustomNotification(QWidget):
             "rest":        {"bg": "rgba(240, 240, 240, 0.9)", "fg": "#1e1e1e", "timer": "#f33100", "btn_bg": "#1e1e1e", "btn_fg": "#ffffff"},
             "rest_prompt": {"bg": "rgba(100, 188, 100, 0.9)", "fg": "#ffffff", "timer": "#ffffff", "btn_bg": "#ffffff", "btn_fg": "#1e1e1e", "btn_primary_bg": "#1e1e1e", "btn_primary_fg": "#ffffff"},
             "postponed":   {"bg": "rgba(243, 165, 0, 0.9)", "fg": "#ffffff", "timer": "#ffffff", "btn_bg": "#ffffff", "btn_fg": "#1e1e1e"},
+            "work_prompt": {"bg": "rgba(100, 164, 217, 0.9)", "fg": "#ffffff", "timer": "#ffffff", "btn_bg": "#ffffff", "btn_fg": "#1e1e1e", "btn_primary_bg": "#1e1e1e", "btn_primary_fg": "#ffffff"},
             "idle_inactive_hours": {"bg": "rgba(28, 28, 28, 0.85)", "fg": "#777777", "timer": "#777777", "btn_bg": "#444444", "btn_fg": "#aaaaaa"}
         }
         
@@ -692,28 +696,35 @@ class ProductivityApp:
 
     def start_main_timer(self):
         self.main_timer.stop()
+
         if not self.is_within_active_hours():
             if self.current_mode != "idle_inactive_hours":
                 self.current_mode = "idle_inactive_hours"
                 if self.active_notification: self.active_notification.fade_out()
-                self.current_phase_end_time = time.time()
                 self.show_notification()
             self.tray_icon.setToolTip("Спит (вне часов)")
             self.tray_icon.setIcon(self._generate_icon_image("Zzz", TRAY_ICON_IDLE_BG, TRAY_ICON_IDLE_FG))
-            QTimer.singleShot(60 * 1000, self.start_main_timer)
+            QTimer.singleShot(60 * 1000, self.start_main_timer) # Проверяем через минуту
             return
 
         if self.current_mode == "idle_inactive_hours":
-            self.current_mode = "work"
+            self.current_mode = "work" # Начинаем день с работы
 
+        # --- УПРОЩЕННАЯ И ИСПРАВЛЕННАЯ ЛОГИКА ---
+        # Просто берем длительность для текущего режима и запускаем новый таймер.
+        # Никаких сложных и ошибочных "коррекций времени".
+        
         duration_sec = {
             "work": self.work_duration_sec,
             "rest": self.rest_duration_sec,
             "postponed": self.postpone_duration_sec
         }.get(self.current_mode, 0)
 
+        # Всегда начинаем новый отсчет с текущего момента
         self.current_phase_end_time = time.time() + duration_sec
-        self.show_notification()
+        
+        # Показываем уведомление для ТОЛЬКО ЧТО установленного режима
+        self.show_notification() 
         self.update_display_elements()
         self.main_timer.start()
 
@@ -722,29 +733,34 @@ class ProductivityApp:
             self.start_main_timer()
             return
         
-        if self.current_mode == "rest_prompt":
+        if self.current_mode in ["rest_prompt", "work_prompt"]:
             # В режиме переработки просто обновляем дисплей
             self.update_display_elements()
         else:
             remaining_seconds = max(0, int(self.current_phase_end_time - time.time()))
             self.update_display_elements(current_remaining_seconds=remaining_seconds)
-    
+
             if remaining_seconds <= 0:
-                if self.current_mode in ["work", "postponed", "rest"]:
+                if self.current_mode in ["work", "postponed"]:
                     self.play_sound()
                     self.current_mode = "rest_prompt"
                     self.overtime_start_time = time.time()
                     self.update_display_elements()
                     self.show_notification(is_rest_prompt=True)
+                elif self.current_mode == "rest":
+                    self.play_sound()
+                    self.current_mode = "work_prompt"
+                    self.overtime_start_time = time.time()
+                    self.update_display_elements()
+                    self.show_notification(is_work_prompt=True)
     
     def update_display_elements(self, current_remaining_seconds=None):
         # --- ИСПРАВЛЕНИЕ RuntimeError ---
         # Теперь эта проверка безопасна
-        is_prompt_active = self.active_notification and self.active_notification.is_persistent
-        mode = "rest_prompt" if is_prompt_active else self.current_mode
+        mode = self.current_mode
     
         if current_remaining_seconds is None:
-            if mode == "rest_prompt":
+            if mode in ["rest_prompt", "work_prompt"]:
                 current_remaining_seconds = int(time.time() - self.overtime_start_time)
             else:
                 current_remaining_seconds = max(0, int(self.current_phase_end_time - time.time()))
@@ -772,6 +788,13 @@ class ProductivityApp:
             tray_bg, tray_fg = TRAY_ICON_PROMPT_BG, TRAY_ICON_PROMPT_FG
             tray_title = f"Переработка: {self.format_time(overtime_seconds)}"
             timer_text = self.format_time(overtime_seconds)
+        elif mode == "work_prompt":
+            overtime_seconds = int(time.time() - self.overtime_start_time)
+            m, s = divmod(overtime_seconds, 60)
+            icon_text = str(m if m > 0 else overtime_seconds)
+            tray_bg, tray_fg = TRAY_ICON_WORK_PROMPT_BG, TRAY_ICON_WORK_PROMPT_FG
+            tray_title = f"Пропуск работы: {self.format_time(overtime_seconds)}"
+            timer_text = self.format_time(overtime_seconds)
         elif mode == "postponed":
             tray_bg, tray_fg = TRAY_ICON_POSTPONED_BG, TRAY_ICON_POSTPONED_FG
             tray_title = f"Отложено: {timer_text}"
@@ -792,19 +815,28 @@ class ProductivityApp:
         m, s = divmod(seconds, 60)
         return f"{m:02d}:{s:02d}"
     
-    def show_notification(self, is_rest_prompt=False, from_tray_click=False):
-        current_eval_mode = "rest_prompt" if is_rest_prompt else self.current_mode
+# --- Вставьте этот код в класс ProductivityApp, ЗАМЕНИВ старые версии этих методов ---
+
+# --- Вставьте этот код в класс ProductivityApp, ПОЛНОСТЬЮ ЗАМЕНИВ старые версии этих методов ---
+
+    def show_notification(self, is_rest_prompt=False, is_work_prompt=False, from_tray_click=False):
+        if is_rest_prompt:
+            current_eval_mode = "rest_prompt"
+        elif is_work_prompt:
+            current_eval_mode = "work_prompt"
+        else:
+            current_eval_mode = self.current_mode
         
         if self.active_notification:
             if self.active_notification.mode_key == current_eval_mode and not from_tray_click:
                 self.active_notification.activateWindow()
                 return
-            # Закрываем старое уведомление, если тип не совпадает
             self.active_notification.fade_out()
         
         title, timer_text, buttons = "", "", []
         persistent = False
         
+        # Предложение начать отдых
         if current_eval_mode == "rest_prompt":
             title = "Пора отдохнуть!"
             timer_text = self.format_time(self.rest_duration_sec)
@@ -813,18 +845,35 @@ class ProductivityApp:
                 {"text": "Начать отдых", "command": self.start_rest_action, "style": "Primary"}
             ]
             persistent = False
+        # Таймер работы
         elif current_eval_mode == "work":
             title = "Работаем"
             timer_text = self.format_time(max(0, int(self.current_phase_end_time - time.time())))
-            buttons = [{"text": "Завершить работу", "command": self.force_start_rest_action, "style": ""}]
+            buttons = [{"text": "Завершить работу", "command": self.start_rest_action, "style": ""}]
+        # Таймер отдыха
         elif current_eval_mode == "rest":
             title = "Отдыхаем"
             timer_text = self.format_time(max(0, int(self.current_phase_end_time - time.time())))
-            buttons = [{"text": "Вернуться к работе", "command": self.force_start_work_action, "style": ""}]
+            buttons = [{"text": "Вернуться к работе", "command": self.start_work_action, "style": ""}]
+        # Предложение начать работу
+        elif current_eval_mode == "work_prompt":
+            title = "Пора работать!"
+            timer_text = self.format_time(self.work_duration_sec)
+            buttons = [
+                {"text": f"Отложить ({self.config_manager.postpone_minutes}м)", "command": self.postpone_work_action, "style": ""},
+                {"text": "Начать работать", "command": self.start_work_action, "style": "Primary"}
+            ]
+            persistent = False
+        # Таймер отложенного состояния
         elif current_eval_mode == "postponed":
-            title = "Отдых отложен"
             timer_text = self.format_time(max(0, int(self.current_phase_end_time - time.time())))
-            buttons = [{"text": "Начать отдых", "command": self.force_start_rest_from_postponed_action, "style": ""}]
+            if hasattr(self, 'postponed_from_work') and self.postponed_from_work:
+                title = "Работа отложена"
+                buttons = [{"text": "Начать работать", "command": self.start_work_action, "style": ""}]
+            else:
+                title = "Отдых отложен"
+                buttons = [{"text": "Начать отдых", "command": self.start_rest_action, "style": ""}]
+        # Неактивные часы
         elif current_eval_mode == "idle_inactive_hours":
             title = "Приложение спит"
             timer_text = "--:--"
@@ -834,31 +883,48 @@ class ProductivityApp:
         self.active_notification = CustomNotification(
             self, current_eval_mode, title, timer_text, buttons, persistent, self.config_manager.notif_timeout * 1000
         )
-        # --- ИСПРАВЛЕНИЕ RuntimeError ---
-        # Подписываемся на сигнал закрытия, чтобы обнулить ссылку
         self.active_notification.closed.connect(self._on_notification_closed)
-        
         self.update_display_elements()
     
     def _on_notification_closed(self):
-        """ Этот слот вызывается, когда уведомление закрывается. """
         self.active_notification = None
     
     def _handle_action(self, action_func):
         if self.active_notification: self.active_notification.fade_out()
         action_func()
     
-    def start_rest_action(self): self._handle_action(lambda: self._set_mode_and_start("rest"))
-    def postpone_rest_action(self): self._handle_action(lambda: self._set_mode_and_start("postponed"))
-    def force_start_rest_action(self): self._handle_action(lambda: self._set_mode_and_start("rest"))
-    def force_start_work_action(self): self._handle_action(lambda: self._set_mode_and_start("work"))
-    def force_start_rest_from_postponed_action(self): self._handle_action(lambda: self._set_mode_and_start("rest"))
+    # --- УПРОЩЕННЫЕ И ЕДИНСТВЕННО ВЕРНЫЕ ДЕЙСТВИЯ ---
+
+    # Запускает таймер ОТДЫХА
+    def start_rest_action(self): 
+        self._handle_action(lambda: self._set_mode_and_start("rest"))
+
+    # Запускает таймер РАБОТЫ
+    def start_work_action(self): 
+        self._handle_action(lambda: self._set_mode_and_start("work"))
     
+    # Откладывает отдых
+    def postpone_rest_action(self): 
+        self.postponed_from_work = False
+        self._handle_action(lambda: self._set_mode_and_start("postponed"))
+    
+    # Откладывает работу
+    def postpone_work_action(self): 
+        self.postponed_from_work = True
+        self._handle_action(lambda: self._set_mode_and_start("postponed"))
+    
+    # Вспомогательный метод для запуска любого режима
     def _set_mode_and_start(self, mode):
         self.current_mode = mode
-        if mode != 'postponed': # Не проигрываем звук при откладывании
-             self.play_sound()
+        # Не проигрываем звук при откладывании
+        if not mode.startswith('postponed'):
+            self.play_sound()
         self.start_main_timer()
+
+    def start_work_action(self): self._handle_action(lambda: self._set_mode_and_start("work"))
+    def postpone_work_action(self): 
+        self.postponed_from_work = True
+        self._handle_action(lambda: self._set_mode_and_start("postponed"))
     
     def show_settings_window(self):
         if not self.settings_window or not self.settings_window.isVisible():
